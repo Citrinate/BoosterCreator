@@ -11,6 +11,9 @@ namespace BoosterManager {
 		[JsonProperty(Required = Required.DisallowNull)]
 		private readonly ConcurrentDictionary<uint, BoosterLastCraft> BoosterLastCrafts = new();
 
+		[JsonProperty(Required = Required.DisallowNull)]
+		internal int AppListCount = 0;
+
 		[JsonConstructor]
 		private BoosterDatabase() { }
 
@@ -56,7 +59,6 @@ namespace BoosterManager {
 			}
 
 			boosterDatabase.FilePath = filePath;
-			ASF.ArchiLogger.LogGenericInfo(String.Format("Booster Database Loaded: {0}, {1} boosters loaded", filePath, boosterDatabase.BoosterLastCrafts.Count));
 
 			return boosterDatabase;
 		}
@@ -86,6 +88,12 @@ namespace BoosterManager {
 
 				return oldCraft;
 			});
+			Utilities.InBackground(Save);
+		}
+
+		internal void UpdateAppListCount(int appListCount) {
+			AppListCount = appListCount;
+
 			Utilities.InBackground(Save);
 		}
 	}

@@ -20,7 +20,7 @@ namespace BoosterManager {
 		private uint UntradableGooAmount = 0;
 		private const int MinDelayBetweenBoosters = 5; // Minimum delay, in seconds, between booster crafts
 		internal int BoosterDelay = 0; // Delay, in seconds, added to all booster crafts
-		private readonly BoosterDatabase? BoosterDatabase;
+		private readonly BoosterDatabase BoosterDatabase;
 		internal event Action? OnBoosterInfosUpdated;
 		private static HashSet<uint> MarketableAppIDs = new();
 		private static DateTime? MarketableAppIDsUpdatedAt;
@@ -38,11 +38,13 @@ namespace BoosterManager {
 			);
 
 			string databaseFilePath = Bot.GetFilePath(String.Format("{0}_{1}", bot.BotName, nameof(BoosterManager)), Bot.EFileType.Database);
-			BoosterDatabase = BoosterDatabase.CreateOrLoad(databaseFilePath);
-
-			if (BoosterDatabase == null) {
+			var boosterDatabase = BoosterDatabase.CreateOrLoad(databaseFilePath);
+			if (boosterDatabase == null) {
 				bot.ArchiLogger.LogGenericError(String.Format(Strings.ErrorDatabaseInvalid, databaseFilePath));
+				throw new InvalidOperationException(nameof(boosterDatabase));
 			}
+
+			BoosterDatabase = boosterDatabase;
 		}
 
 		public void Dispose() {
@@ -187,19 +189,24 @@ namespace BoosterManager {
 		}
 
 		private static async Task<bool> UpdateMarketableAppIDs() {
+			if (BoosterHandler.AllowCraftUnmarketableBoosters) {
+				return true;
+			}
+
 			await UpdateMarketableAppIDsSemaphore.WaitAsync().ConfigureAwait(false);
 			try {
 				if (MarketableAppIDsUpdatedAt != null && MarketableAppIDsUpdatedAt.Value.AddMinutes(MarketableAppIDsUpdateRateMinutes) > DateTime.Now) {
 					return true;
 				}
 
-				var bot = Bot.BotsReadOnly?.Values.FirstOrDefault(x => x.IsConnectedAndLoggedOn);
-				if (bot == null) {
-					ASF.ArchiLogger.LogNullError(bot);
+				var bots = Bot.BotsReadOnly?.Values.Where(x => x.IsConnectedAndLoggedOn);
+				if (bots == null || bots.Count() == 0) {
+					ASF.ArchiLogger.LogNullError(bots);
 					
 					return false;
 				}
 
+				var bot = bots.ElementAt((new Random()).Next(0, bots.Count()));
 				var appList = await WebRequest.GetAppList(bot).ConfigureAwait(false);
 				if (appList == null) {
 					ASF.ArchiLogger.LogNullError(appList);
@@ -207,6 +214,20 @@ namespace BoosterManager {
 					return false;
 				}
 
+				// GetAppList only returns marketable apps, but sometimes, randomly, it's also missing thousands of random apps (Ex: I saw a drop from 179,823 to 142,797 and then back up to 179,961)
+				// Generally the number of apps it should always go up, as new games tend to be added faster than games are removed.  If it ever drops by a surprising amount, assume the data is incomplete
+				// We cache the last count we saw from GetAppList to determine how many apps may be missing, but there's no way to reliably initialize this.  It's impossible to tell if the very first app list has missing values.
+				// Using the same bots to call GetAppList, I saw this error over and over again for 30 minutes.
+				// Even doing this, there can be a few missing apps here and there.  It seems this solution will never be reliable
+				int lastSeenAppListCount = BoosterHandler.BoosterHandlers.Values.Select(x => x.BoosterQueue.BoosterDatabase.AppListCount).Max();
+				int currentAppListCount = appList.Count;
+				if (lastSeenAppListCount > 0 && ((double) currentAppListCount / lastSeenAppListCount) < 0.95) {
+					ASF.ArchiLogger.LogGenericDebug(String.Format("Could not fetch all Marketable IDs, returned app list dropped from {0} to {1}", lastSeenAppListCount, currentAppListCount));
+
+					return false;
+				}
+
+				BoosterHandler.BoosterHandlers.Values.ToList().ForEach(x => x.BoosterQueue.BoosterDatabase.UpdateAppListCount(appList.Count));
 				MarketableAppIDs = appList.Keys.ToHashSet();
 				MarketableAppIDsUpdatedAt = DateTime.Now;
 				ASF.ArchiLogger.LogGenericDebug("Marketable IDs updated");
@@ -391,7 +412,7 @@ namespace BoosterManager {
 		private static int GetMillisecondsFromNow(DateTime then) => Math.Max(0, (int) (then - DateTime.Now).TotalMilliseconds);
 		private void UpdateTimer(DateTime then) => Timer.Change(GetMillisecondsFromNow(then), Timeout.Infinite);
 		internal uint GetAvailableGems() => BoosterHandler.AllowCraftUntradableBoosters ? GooAmount : TradableGooAmount;
-		internal BoosterLastCraft? GetLastCraft(uint appID) => BoosterDatabase?.GetLastCraft(appID);
-		internal void UpdateLastCraft(uint appID, DateTime craftTime) => BoosterDatabase?.SetLastCraft(appID, craftTime, BoosterDelay);
+		internal BoosterLastCraft? GetLastCraft(uint appID) => BoosterDatabase.GetLastCraft(appID);
+		internal void UpdateLastCraft(uint appID, DateTime craftTime) => BoosterDatabase.SetLastCraft(appID, craftTime, BoosterDelay);
 	}
 }

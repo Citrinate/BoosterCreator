@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 namespace BoosterManager {
 	internal sealed class BoosterHandler : IDisposable {
 		private readonly Bot Bot;
-		private readonly BoosterQueue BoosterQueue;
+		internal readonly BoosterQueue BoosterQueue;
 		private Bot RespondingBot; // When we send status alerts, they'll come from this bot
 		private ulong RecipientSteamID; // When we send status alerts, they'll go to this SteamID
 		internal static ConcurrentDictionary<string, Timer> ResponseTimers = new();
